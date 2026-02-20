@@ -613,7 +613,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "sum",
-        help="path to AA amplicon summaries folder",
+        help="path to SV summaries folder or SV summary file",
         type=str,
     )
     parser.add_argument(
@@ -635,16 +635,24 @@ if __name__ == "__main__":
     bamfile = args.bam
     samfile = pysam.AlignmentFile(bamfile, "rb")
     # print(samfile.header)
-    df = pd.concat(
-        [
-            pd.read_csv(os.path.join(args.sum, f), sep="\t").assign(
-                sample=f.split("_")[1] if "amplicon" in f else f
+
+    df = None
+    if os.path.isdir(args.sum):
+        df = pd.concat(
+            [
+                pd.read_csv(os.path.join(args.sum, f), sep="\t").assign(
+                    sample=f.split("_")[1] if "amplicon" in f else f
+                )
+                for f in os.listdir(args.sum)
+                if f.endswith(".tsv")
+            ],
+            ignore_index=True,
+        )
+    else:
+        file_name = os.path.basename(args.sum)
+        df = pd.read_csv(args.sum, sep="\t").assign(
+                sample=file_name.split("_")[1] if "amplicon" in file_name else file_name
             )
-            for f in os.listdir(args.sum)
-            if f.endswith(".tsv")
-        ],
-        ignore_index=True,
-    )
 
     # Track which optional columns are present in the input
     has_read_support = "read_support" in df.columns
@@ -974,13 +982,16 @@ if __name__ == "__main__":
             columns=["homology_len", "homology_seq"], errors="ignore"
         )
 
+    print(leftover_output)
+    print(final_output)
+    print(args.file)
     final_output.to_csv(
         args.file if args.file else args.bam.split("/")[-1].split(".")[0] + ".tsv",
         sep="\t",
         index=False,
     )
     leftover_output.to_csv(
-        args.file
+        args.file.split("/")[-1].split(".")[0] + "_leftover.tsv"
         if args.file
         else args.bam.split("/")[-1].split(".")[0] + "_leftover.tsv",
         sep="\t",

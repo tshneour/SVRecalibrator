@@ -534,7 +534,13 @@ def check_overlap(left, right, leftover):
     return out
 
 def run_split(args):
+    split_log = open(args.split_log + ".txt", "w")
     all_reads = pd.read_csv(args.file, sep="\t").drop_duplicates()
+
+    if all_reads.empty:
+        print(f"{args.file} is empty, no results to report from split read analysis")
+        split_log.write(f"{args.file} is empty, no results to report from split read analysis")
+
     leftover_splits = pd.read_csv(args.file[:-4] + "_leftover" + ".tsv", sep="\t").drop_duplicates()
     has_homology = ("homology_len" in all_reads.columns) and ("homology_seq" in all_reads.columns)
     has_read_support = "break_read_support" in all_reads.columns
@@ -544,7 +550,6 @@ def run_split(args):
         if len(reads) > 2:
             bp_to_read_idxs.setdefault(group[0], []).append(reads.index.to_list())
     svs = all_reads.groupby(["break_chrom1", "break_pos1", "break_chrom2", "break_pos2"])
-    split_log = open(args.split_log + ".txt", "w")
     summary = []
 
     if args.list:
@@ -1155,7 +1160,7 @@ def run_scaffold(args):
             }
         )
         homs = []
-
+    
     scaffold_log.close()
 
     base_cols = [
@@ -1167,6 +1172,13 @@ def run_scaffold(args):
         "break_orientation",
         "sample",
     ]
+
+    if not summary:
+        print("No results to report from scaffold analysis")
+        return pd.DataFrame(columns=['break_chrom1', 'break_pos1', 'break_chrom2', 'break_pos2',
+       'break_sv_type', 'break_orientation', 'sample', 'homology_len',
+       'homology_seq', 'sc_pos1', 'sc_pos2', 'sc_hom_len', 'sc_hom'])
+    
     if has_read_support:
         base_cols.insert(5, "break_read_support")
     if has_features:
@@ -1238,6 +1250,7 @@ def main():
 
     args = p.parse_args()
     args.out_table = args.out_table + ".tsv"
+
     if args.mode == "split":
         out = run_split(args)
         if out is not None:
