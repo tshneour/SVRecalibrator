@@ -551,8 +551,11 @@ def run_split(args):
     all_reads = pd.read_csv(args.file, sep="\t").drop_duplicates()
 
     if all_reads.empty:
-        print(f"{args.file} is empty, no results to report from split read analysis")
-        split_log.write(f"{args.file} is empty, no results to report from split read analysis")
+        msg = f"{args.file} is empty, no results to report from split read analysis"
+        print(msg)
+        split_log.write(msg)
+        split_log.close()
+        return None
 
     leftover_splits = pd.read_csv(args.file[:-4] + "_leftover" + ".tsv", sep="\t").drop_duplicates()
     has_homology = ("homology_len" in all_reads.columns) and ("homology_seq" in all_reads.columns)
@@ -781,7 +784,8 @@ def generate_scaffolds(fq1, fq2, out_dir, args):
         "-t",
         str(args.threads)
     ]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    timeout = args.spades_timeout * 3600 if args.spades_timeout > 0 else None
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
     if r.returncode or not os.path.isfile(f"{out_dir}/scaffolds.fasta"):
         raise RuntimeError(f"SPAdes failed:\n{r.stderr, r.stdout}")
     seqs = []
@@ -934,6 +938,9 @@ def aln_err_density(alns):
 
 def run_scaffold(args):
     df_all = pd.read_csv(args.file, sep="\t")
+    if df_all.empty:
+        print(f"{args.file} is empty, no results to report from scaffold analysis")
+        return None
     has_homology = ("homology_len" in df_all.columns) and ("homology_seq" in df_all.columns)
     has_read_support = "break_read_support" in df_all.columns
     has_features = "break_features" in df_all.columns
@@ -986,6 +993,15 @@ def run_scaffold(args):
         scaffs = None
         try:
             scaffs = generate_scaffolds(fq1, fq2, bp_out, args)
+            if getattr(args, "clean", False) and not getattr(args, "keep_intermediates", False):
+                shutil.rmtree(bp_out, ignore_errors=True)
+        except subprocess.TimeoutExpired:
+            msg = f"breakpoint {idx + 1}: SPAdes exceeded the time limit ({args.spades_timeout:.4g}h) and was killed — skipping."
+            print(msg)
+            scaffold_log.write(f"=== Breakpoint {idx + 1} ===\n")
+            scaffold_log.write(msg + "\n")
+            summary.append({"sc_pos1": None, "sc_pos2": None, "sc_hom_len": None, "sc_hom": None})
+            continue
         except RuntimeError as ex:
             print(
                 f"breakpoint {idx + 1}: SpAdes ran into an error. Check that your input arguments are correct. This may also be due to low coverage.\n"
@@ -1212,7 +1228,7 @@ def run_scaffold(args):
     print(f"Augmented scaffold predictions written to {args.out_table}")
     return out
 
-def main():
+def main(args_list=None):
     p = argparse.ArgumentParser(
         description="SV split read analysis OR scaffold reconstruction"
     )
@@ -1260,8 +1276,25 @@ def main():
         help="how many threads to use for the assembler",
     )
     p.add_argument("--fasta", help="indexed FASTA for extract_region")
+    p.add_argument(
+        "--spades-timeout",
+        type=float,
+        default=2.0,
+        metavar="HOURS",
+        help="time limit for each SPAdes run in hours; 0 = no limit (default: 2.0)",
+    )
+    p.add_argument(
+        "--clean",
+        action="store_true",
+        help="clean up intermediate SPAdes build directories and FASTQ files after processing",
+    )
+    p.add_argument(
+        "--keep-intermediates",
+        action="store_true",
+        help="preserve intermediate SPAdes directories and FASTQ files (overrides --clean)",
+    )
 
-    args = p.parse_args()
+    args = p.parse_args(args_list)
     args.out_table = args.out_table + ".tsv"
 
     if args.mode == "split":
@@ -1272,32 +1305,45 @@ def main():
         if not args.fasta:
             p.error("--fasta is required in scaffold mode")
         out = run_scaffold(args)
-        out.to_csv(args.out_table, sep="\t", index=False)
+        if out is not None:
+            out.to_csv(args.out_table, sep="\t", index=False)
+        else:
+            pd.DataFrame().to_csv(args.out_table, sep="\t", index=False)
     else:
         if not args.fasta:
             p.error("--fasta is required in scaffold mode")
         out_sc = run_scaffold(args)
         out_split = run_split(args)
-        final = pd.concat(
-            [
-                out_sc.reset_index(drop=True),
-                out_split[
-                    [
-                        "split_support",
-                        "soft_support",
-                        "left_soft_matches",
-                        "right_soft_matches",
-                        "sp_left_sv",
-                        "sp_right_sv",
-                        "sp_hom_len",
-                        "hom",
-                        "tst_cords"
-                    ]
-                ].reset_index(drop=True),
-            ],
-            axis=1,
-        )
-        final.to_csv(args.out_table, sep="\t", index=False)
+        if out_sc is None or out_split is None:
+            pd.DataFrame().to_csv(args.out_table, sep="\t", index=False)
+        else:
+            final = pd.concat(
+                [
+                    out_sc.reset_index(drop=True),
+                    out_split[
+                        [
+                            "split_support",
+                            "soft_support",
+                            "left_soft_matches",
+                            "right_soft_matches",
+                            "sp_left_sv",
+                            "sp_right_sv",
+                            "sp_hom_len",
+                            "hom",
+                            "tst_cords"
+                        ]
+                    ].reset_index(drop=True),
+                ],
+                axis=1,
+            )
+            final.to_csv(args.out_table, sep="\t", index=False)
+
+    if args.clean and not args.keep_intermediates:
+        if os.path.exists(args.outdir):
+            shutil.rmtree(args.outdir, ignore_errors=True)
+        if os.path.exists("fastq"):
+            shutil.rmtree("fastq", ignore_errors=True)
 
 if __name__ == "__main__":
     main()
+

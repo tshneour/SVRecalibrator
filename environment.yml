@@ -1,0 +1,17 @@
+name: sv-analysis
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.11,<3.14.0a0
+  - biopython
+  - pysam
+  - samtools
+  - bwa
+  - spades=4.2.0
+  - pandas
+  - numpy
+  - natsort
+  - marisa-trie
+  - matplotlib-base

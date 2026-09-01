@@ -1,0 +1,29 @@
+Bootstrap: docker
+From: condaforge/miniforge3:latest
+
+%labels
+    Maintainer SVRecalibrator Team
+    Description Apptainer container definition for SVRecalibrator pipeline
+
+%files
+    environment.yml /opt/sv-recalibrator/environment.yml
+    pyproject.toml /opt/sv-recalibrator/pyproject.toml
+    collect.py /opt/sv-recalibrator/collect.py
+    refine.py /opt/sv-recalibrator/refine.py
+    summarize_homology.py /opt/sv-recalibrator/summarize_homology.py
+    sv_recalibrator.py /opt/sv-recalibrator/sv_recalibrator.py
+    batch_run.sh /opt/sv-recalibrator/batch_run.sh
+    README.md /opt/sv-recalibrator/README.md
+
+%post
+    export PATH="/opt/conda/bin:$PATH"
+    cd /opt/sv-recalibrator
+    conda env create -f environment.yml
+    conda clean -a -y
+    /opt/conda/envs/sv-analysis/bin/pip install -e .
+
+%environment
+    export PATH="/opt/conda/envs/sv-analysis/bin:$PATH"
+
+%runscript
+    exec sv-recalibrator "$@"

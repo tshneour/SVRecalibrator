@@ -601,7 +601,7 @@ def last_match_coord(cigartuple):
     return maxmatch
 
 
-if __name__ == "__main__":
+def main(args_list=None):
     parser = argparse.ArgumentParser(
         description="Collect reads from the ends of a SV for refinement."
     )
@@ -622,6 +622,12 @@ if __name__ == "__main__":
         type=str,
     )
     parser.add_argument(
+        "-s",
+        "--sample",
+        help="Sample name or prefix to filter SV summary files",
+        type=str,
+    )
+    parser.add_argument(
         "-v", "--verbose", help="Include debug output", action="store_true"
     )
     parser.add_argument(
@@ -630,7 +636,7 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument("-f", "--file", help="File to store alignments", type=str)
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
     # Define the BAM file and positions
     bamfile = args.bam
     samfile = pysam.AlignmentFile(bamfile, "rb")
@@ -638,21 +644,50 @@ if __name__ == "__main__":
 
     df = None
     if os.path.isdir(args.sum):
-        df = pd.concat(
-            [
-                pd.read_csv(os.path.join(args.sum, f), sep="\t").assign(
-                    sample=f.split("_")[1] if "amplicon" in f else f
+        files = sorted([f for f in os.listdir(args.sum) if f.endswith(".tsv")])
+        if args.sample:
+            prefix = args.sample
+            files = [
+                f
+                for f in files
+                if f.startswith(prefix + "_")
+                or f.startswith(prefix + ".")
+                or f == f"{prefix}.tsv"
+            ]
+        if not files:
+            msg = f"No matching SV summary TSV files found in {args.sum}"
+            if args.sample:
+                msg += f" for sample '{args.sample}'"
+            raise RuntimeError(msg)
+
+        df_list = []
+        for f in files:
+            file_sample = (
+                args.sample
+                if args.sample
+                else (
+                    f.split("_")[1]
+                    if "amplicon" in f
+                    else (f[:-4] if f.endswith(".tsv") else f)
                 )
-                for f in os.listdir(args.sum)
-                if f.endswith(".tsv")
-            ],
-            ignore_index=True,
-        )
+            )
+            df_curr = pd.read_csv(os.path.join(args.sum, f), sep="\t").assign(
+                sample=file_sample
+            )
+            df_list.append(df_curr)
+        df = pd.concat(df_list, ignore_index=True)
     else:
         file_name = os.path.basename(args.sum)
-        df = pd.read_csv(args.sum, sep="\t").assign(
-                sample=file_name.split("_")[1] if "amplicon" in file_name else file_name
+        file_sample = (
+            args.sample
+            if args.sample
+            else (
+                file_name.split("_")[1]
+                if "amplicon" in file_name
+                else (file_name[:-4] if file_name.endswith(".tsv") else file_name)
             )
+        )
+        df = pd.read_csv(args.sum, sep="\t").assign(sample=file_sample)
 
     # Track which optional columns are present in the input
     has_read_support = "read_support" in df.columns
@@ -728,7 +763,26 @@ if __name__ == "__main__":
 
     samfile.close()
 
-    output = pd.concat(output, ignore_index=True) if output else pd.DataFrame()
+    if not output:
+        print("No reads collected for any breakpoint — writing empty output files.")
+        empty_cols = [
+            "break_chrom1", "break_pos1", "break_chrom2", "break_pos2",
+            "break_sv_type", "break_orientation",
+            "query_name", "query_short", "split", "proper_pair", "read_num",
+            "query_chrom", "query_pos", "query_end", "query_orientation",
+            "query_cigar", "query_aln_full", "query_aln_sub", "sample",
+        ]
+        out_stem = args.file if args.file else args.bam.split("/")[-1].split(".")[0] + ".tsv"
+        pd.DataFrame(columns=empty_cols).to_csv(out_stem, sep="\t", index=False)
+        leftover_stem = (
+            args.file.split("/")[-1].split(".")[0] + "_leftover.tsv"
+            if args.file
+            else args.bam.split("/")[-1].split(".")[0] + "_leftover.tsv"
+        )
+        pd.DataFrame(columns=empty_cols).to_csv(leftover_stem, sep="\t", index=False)
+        import sys; sys.exit(0)
+
+    output = pd.concat(output, ignore_index=True)
     leftover_output = (
         pd.concat(leftover_output, ignore_index=True)
         if leftover_output
@@ -787,6 +841,8 @@ if __name__ == "__main__":
 
     # Turn groups of split reads into aggregated series
     def sv_summary(grp):
+        # grp.name is a (break_chrom1, break_pos1) tuple; pandas 3.0 removed
+        # groupby keys from the grp DataFrame, so we read break_pos1 this way.
         break_chrom1, break_pos1 = grp.name
         mask_left = grp["is_left"]
         mask_right = ~mask_left
@@ -999,3 +1055,8 @@ if __name__ == "__main__":
     if args.verbose:
         print("Total Number of split reads:", num_split)
         print("Total Number of paired reads:", num_paired)
+
+
+if __name__ == "__main__":
+    main()
+

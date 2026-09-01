@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sv-recalibrator"
+version = "0.3.0"
+description = "Structural Variant Breakpoint Refinement Pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "biopython",
+    "pysam",
+    "pandas",
+    "numpy",
+    "natsort",
+    "marisa-trie",
+    "matplotlib",
+]
+
+[project.scripts]
+sv-recalibrator = "sv_recalibrator:main"
+
+[tool.setuptools]
+py-modules = ["collect", "refine", "summarize_homology", "sv_recalibrator"]

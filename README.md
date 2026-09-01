@@ -6,7 +6,7 @@ Tools to collect reads around structural-variant (SV) breakpoints and refine pre
 
 * Linux / macOS (bash)
 * **git**
-* **conda**
+* **conda** / **mamba**
 
 ---
 
@@ -16,63 +16,104 @@ Tools to collect reads around structural-variant (SV) breakpoints and refine pre
 
 ```bash
 git clone https://github.com/tshneour/SVRecalibrator.git
+cd SVRecalibrator
 ```
 
----
+### 2. Create conda environment and install dependencies
 
-## 2. Create conda environment and install requirements
-
-Use conda with strict channel priority to ensure consistent dependency resolution across conda-forge and bioconda:
+Use `environment.yml` to create the `sv-analysis` environment:
 
 ```bash
-
-conda create -n sv-analysis "python>=3.11,<=3.14.0a0"
+conda env create -f environment.yml
 conda activate sv-analysis
-conda install -c bioconda biopython pysam samtools spades=4.2.0
-conda install pandas numpy natsort marisa-trie
+```
 
-conda activate sv-analysis
+### 3. Install SVRecalibrator package CLI
+
+Install in editable mode so the unified `sv-recalibrator` command is available on your PATH:
+
+```bash
+pip install -e .
 ```
 
 ---
 
 ## Quickstart
 
-1. **Setup**
+### Single Sample Execution
+
+To refine breakpoints for a single sample BAM and SV summary directory:
 
 ```bash
-conda activate sv-analysis
+sv-recalibrator run \
+  --bam /path/to/sample.bam \
+  --sv-dir /path/to/AA_summaries \
+  -o /path/to/output_dir \
+  -f /path/to/GRCh38.fa \
+  --strict
 ```
 
-2. **Collect reads** for all AA breakpoints into an alignment table + per-breakpoint read pairs:
+> **Note on Disk Space**: By default, `sv-recalibrator run` automatically cleans up temporary FASTQ files and SPAdes assembly build directories upon completion to save disk space on large BAM runs. To keep these intermediate files, pass `--keep-intermediates`.
 
-```
-python /path/to/collect.py 350 path/to/AA_summaries/ path/to/sample.bam \
-  --strict \
-  -v \
-  -f alignments.tsv
-```
+---
 
-This writes:
+## Unified CLI Reference (`sv-recalibrator`)
 
-* `alignments.tsv` (or `<bam_basename>.tsv` if `-f/--file` not provided)
-* gzip’d FASTQs per breakpoint in `fastq/`:
+### 1. `sv-recalibrator run` (Single Sample)
 
-  * `fastq/b_<chr1>_<pos1+1>_<chr2>_<pos2+1>_1.fastq.gz`
-  * `fastq/b_<chr1>_<pos1+1>_<chr2>_<pos2+1>_2.fastq.gz`
-
-3. **Run Scaffold and Split Read** and get a combined table:
+Runs the complete collection, alignment, and breakpoint refinement workflow for one sample.
 
 ```bash
-python /path/to/refine.py alignments.tsv \
-  --mode both \
-  --fasta /path/to/genome.fa \
-  --out-table final_augmented \
-  -v
-# Produces final_augmented.tsv
+sv-recalibrator run \
+  --bam path/to/sample.bam \
+  --sv-dir path/to/AA_summaries \
+  --outdir path/to/output_dir \
+  --fasta path/to/ref.fa \
+  [--sample SAMPLE_NAME] \
+  [--mode {split,scaffold,both}] \
+  [--radius 350] \
+  [--threads 16] \
+  [--spades-timeout 2.0] \
+  [--strict] \
+  [--keep-intermediates]
 ```
 
-> Tip: **Do not** add “.tsv” to `--out-table`; the program appends “.tsv” automatically.
+**Options:**
+
+| Option | Description |
+|---|---|
+| `--bam BAM` | **(Required)** Path to coordinate-sorted, indexed BAM file. |
+| `--sv-dir DIR` | **(Required)** Directory containing AmpliconArchitect SV summary TSVs (or single file). |
+| `-o, --outdir DIR` | **(Required)** Output directory for output TSVs and logs. |
+| `-f, --fasta FASTA` | **(Required for scaffold/both)** Indexed reference genome FASTA. |
+| `-s, --sample NAME` | Sample prefix for filtering TSVs. If omitted, derived from BAM filename. |
+| `-m, --mode MODE` | Refinement mode: `split`, `scaffold`, or `both` (default: `both`). |
+| `-r, --radius INT` | Collection window radius around breakpoints in bp (default: 350). |
+| `-t, --threads INT` | SPAdes assembly threads (default: 16). |
+| `--spades-timeout HR` | Per-breakpoint SPAdes assembly timeout in hours (default: 2.0). |
+| `--strict` | Filter for read pairs fully aligning within region of interest. |
+| `--keep-intermediates` | Preserve intermediate FASTQs and SPAdes folders (default: auto-clean). |
+
+### 2. `sv-recalibrator batch` (Multi-Sample Batch)
+
+Runs batch execution across multiple samples listed in a sample file.
+
+```bash
+sv-recalibrator batch \
+  --samples phase2_samples.txt \
+  --sv-dir /path/to/SV_summaries \
+  --outdir /path/to/batch_outputs \
+  --fasta /path/to/ref.fa \
+  --strict
+```
+
+### 3. `sv-recalibrator summarize` (Summary & Plots)
+
+Generates summary CSV tables and Euler/histogram figures comparing refined breakpoints against baseline AA calls.
+
+```bash
+sv-recalibrator summarize /path/to/batch_outputs -o /path/to/summary_prefix
+```
 
 ---
 
@@ -80,9 +121,9 @@ python /path/to/refine.py alignments.tsv \
 
 ### SV summary (`sum`) files
 
-`collect.py` expects one or more **tab-separated (****`.tsv`****) files** describing structural-variant breakpoints with a fixed set of required columns.
+`collect.py` expects one or more **tab-separated (`.tsv`) files** describing structural-variant breakpoints with a fixed set of required columns.
 
-Each TSV in the `sum/` directory represents a collection of SV breakpoints which are required to be **coordinate-sorted**. The filename is used only to derive a `sample` identifier or `amplicon` (taken as `filename.split("_")[1]`) if present.
+Each TSV in the `sum/` directory represents a collection of SV breakpoints which are required to be **coordinate-sorted**. When `--sample` is provided, `collect.py` filters the SV summary directory to TSV files matching `<SAMPLE>_*.tsv` or `<SAMPLE>.tsv`.
 
 #### Required columns
 
@@ -112,42 +153,17 @@ If provided, these columns (case-sensitive) will be included in the final output
 | `homology_length`   | int    | Length of homology reported for the breakpoint (may be 0)                                 |
 | `homology_sequence` | string | Homology or inserted sequence (may be empty)                                              |
 
-## Usage
+---
+
+## Underlying Engine Tools
 
 ### `collect.py`
 
 Collect reads around SV breakpoints for refinement and write per-breakpoint paired FASTQs plus a combined TSV of read evidence.
 
 ```
-usage: collect.py [-h] [-v] [--strict] [-f FILE] refine sum bam
+usage: collect.py [-h] [-s SAMPLE] [-v] [--strict] [-f FILE] refine sum bam
 ```
-
-**Positional arguments**
-
-* `refine` (int): Radius (bp) around each breakpoint to fetch alignments (e.g., 500).
-* `sum` (path): Directory containing SV summary `.tsv` files in the format described above.
-* `bam` (path): Coordinate-sorted BAM with index (`.bai`).
-
-**Options**
-
-* `-v, --verbose`           Verbose output.
-* `--strict`                Only keep read pairs whose alignments fully fall within the region(s) of interest.
-* `-f, --file FILE`         Output TSV path (default: `<bam_basename>.tsv`).
-
-**Outputs**
-
-* TSV of reads (`split` and `nonsplit`) with columns including:
-
-  * `break_chrom1`, `break_pos1`, `break_chrom2`, `break_pos2`
-  * `break_sv_type`, `break_orientation`
-  * `query_*` (read-level alignment details)
-  * `proper_pair`, `split`, `amplicon`
-  * `break_read_support`, `break_features`, `homology_len`, `homology_seq` (if present in the input SV summary TSVs)
-
-* Per-breakpoint FASTQs in `fastq/`, gzipped:
-
-  * `fastq/b_<chr1>_<pos1>_<chr2>_<pos2>_1.fastq.gz`
-  * `fastq/b_<chr1>_<pos1>_<chr2>_<pos2>_2.fastq.gz`
 
 ### `refine.py`
 
@@ -157,46 +173,18 @@ Refine SV breakpoints using split-read evidence and/or local de-novo scaffold re
 usage: refine.py FILE [--mode {split,scaffold,both}]
                      [--out-table OUT] [--split-log PATH]
                      [--scaffold-log PATH] [--outdir DIR]
+                     [--clean] [--keep-intermediates]
                      [-l | --list] [-b IDX [IDX ...]] [-v ...]
                      [--fasta FASTA]
 ```
-
-**Required**
-
-* `FILE` (path): TSV produced by `collect.py`.
-
-**Modes**
-
-* `split`: infer refined breakpoint positions and homology using split-read evidence only.
-* `scaffold`: perform local assembly (SPAdes) around each breakpoint and align scaffolds to the reference.
-* `both`: run scaffold refinement first, then augment with split-read results.
-
-**Outputs**
-
-* **Split mode** columns added:
-
-  * `split_support`, `soft_support`
-  * `sp_left_sv`, `sp_right_sv`
-  * `sp_hom_len` (positive = homology, negative = insertion)
-  * `hom` (homology or insertion sequence)
-  * `tst_cords` (if `hom` is a templated insertion, this will show the relevant reference coordinates)
-
-* **Scaffold mode** columns added:
-
-  * `sc_pos1`, `sc_pos2` (refined breakpoint coordinates)
-  * `sc_hom_len` (Int64; negative = insertion, 0 = abutting, positive = homology)
-  * `sc_hom` (sequence)
-
-* **Both**: combined scaffold and split-read columns in a single TSV.
 
 ---
 
 ## Working assumptions & tips
 
 * **BAM**: Coordinate-sorted, indexed (`.bai` present).
-* **SV summaries**: Input TSVs must conform exactly to the column specification above.
+* **SV summaries**: Input TSVs must conform to the column specification above.
 * **Mapping quality**: Reads with MAPQ > 15 (or mapped status) are retained.
-* **FASTQs**: Reconstructed from reads overlapping each breakpoint pair and used by scaffold mode.
 * **FASTA**: Required for scaffold mode; must be indexed first:
 
   ```bash
