@@ -61,6 +61,31 @@ microhomology-shift normalization is applied. Missing lengths remain unknown.
 These are SVRecalibrator-ascertained comparisons, not sensitivity or precision
 estimates; genome-wide Delly-only calls are not automatically false positives.
 
+## Comparing junctions across callers
+
+`compare_callers.py` matches every SVRecalibrator row to Delly2, SvABA and
+GRIDSS2 calls and compares junction homology/insertion lengths. See
+[junction_comparison_methods.md](junction_comparison_methods.md) for the
+matching and junction-comparison methods.
+
+```bash
+python compare_callers.py SVR_BATCH_DIR -f GENOME.fa -o OUTDIR \
+    --delly DELLY_DIR --svaba SVABA_DIR --gridss GRIDSS_DIR
+```
+
+The Turner 2017 inputs are packaged per tool in `turner2017/` (see its README); run them
+with `python compare_callers.py --bundle -f GENOME.fa -o OUTDIR`.
+
+Expected inputs per sample `S`: `SVR_BATCH_DIR/S/final_augmented.tsv`,
+`DELLY_DIR/S.vcf[.gz]`, `SVABA_DIR/S/S.svaba.unfiltered.sv.vcf`, and
+`GRIDSS_DIR/S.vcf.gz`. The reference FASTA (indexed) is used to rebuild Delly2
+junctions from `CONSENSUS`. By default only samples with every caller's VCF are
+included (`--all-samples` to override); `--pass-only` keeps only PASS calls and
+`--window` sets the matching distance (default 100 bp). Outputs:
+`callers_consolidated.csv`, `sample_inventory.csv`, `summary.json`, and
+junction-length histograms and per-tool category bar charts for SVs identified
+by all callers and for all rows.
+
 ## Tests
 
 Run the small fixture tests from this directory:

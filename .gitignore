@@ -12,9 +12,10 @@
 !README.md
 !install.sh
 !analysis/
-!analysis/README.md
-!analysis/svr_delly_analysis.py
-!analysis/consolidate_delly.py
-!analysis/analyze_delly_concordance.py
+!analysis/*.py
+!analysis/*.md
 !analysis/tests/
-!analysis/tests/test_consolidate_delly.py
+!analysis/tests/*.py
+!analysis/turner2017/
+!analysis/turner2017/*.md
+!analysis/turner2017/*.tar.gz
